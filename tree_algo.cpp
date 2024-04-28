@@ -1,81 +1,125 @@
 #include <iostream>
 #include <vector>
-#include <functional>
+#include <algorithm>
+#include <set>
+#include <memory>
 #include <chrono>
 #include <ctime>
 #include "tree_algo.h"
 
-Node* build_segment_tree(int left, int right)
+class SegmentTree
 {
-    if (left + 1 == right)
-    {
-        return new Node(0, left, right, nullptr, nullptr);
-    }
-    int mid = (left + right) / 2;
-    Node* l = build_segment_tree(left, mid);
-    Node* r = build_segment_tree(mid, right);
-    return new Node(l->count + r->count, l->left_index, r->right_index, l, r);
-}
+    std::vector<std::shared_ptr<Node>> roots;
+    size_t size;
 
-Node* insert(Node* node, int start, int end, int status)
-{
-    if (start <= node->left_index && node->right_index <= end)
+    void build_segment_tree(const std::vector<int>& values, int left, int right, std::shared_ptr<Node>& node)
     {
-        return new Node(node->count + status, node->left_index, node->right_index, node->left, node->right);
-    }
-    if (node->right_index <= start || end <= node->left_index)
-    {
-        return node;
-    }
-    Node* new_node = new Node(node->count, node->left_index, node->right_index, node->left, node->right);
-    new_node->left = insert(new_node->left, start, end, status);
-    new_node->right = insert(new_node->right, start, end, status);
-    return new_node;
-}
-
-std::vector<Node*> build_persistent_segment_tree(std::vector<std::vector<int>> rectangles, std::vector<int> coordsY)
-{
-    int n = coordsY.size();
-    std::vector<Event> events;
-    for (std::vector<int> rectangle : rectangles)
-    {
-        Event event_1(rectangle[0], rectangle[1], rectangle[3], 1);
-        Event event_2(rectangle[2], rectangle[1], rectangle[3], -1);
-        events.push_back(event_1);
-        events.push_back(event_2);
-    }
-    std::function<bool(Event, Event)> compare = [](Event e1, Event e2) {return e1.x < e2.x; };
-    sort(events.begin(), events.end(), compare);
-    Node* root = build_segment_tree(0, n);
-    std::vector<Node*> roots;
-    int endX = events[0].x;
-    for (Event event : events)
-    {
-        if (endX != event.x)
+        if (right == left)
         {
-            roots.push_back(root);
-            endX = event.x;
+            node->count = 0;
+            return;
         }
-        int y1 = binary_search(coordsY, event.startY), y2 = binary_search(coordsY, event.endY);
-        root = insert(root, y1, y2, event.status);
+        if (left + 1 == right)
+        {
+            node->count = values[left];
+            return;
+        }
+        int mid = (right + left) / 2;
+        if (!node->left) node->left = std::make_shared<Node>();
+        build_segment_tree(values, left, mid, node->left);
+        if (!node->right) node->right = std::make_shared<Node>();
+        build_segment_tree(values, mid, right, node->right);
     }
-    roots.push_back(root);
-    return roots;
-}
 
-int get_number(Node* node, int target)
-{
-    if (node != nullptr)
+    auto insert(int status, int left, int right, int curr_left, int curr_right, std::shared_ptr<Node>& node)
     {
-        int mid = (node->left_index + node->right_index) / 2;
-        if (target < mid) return node->count + get_number(node->left, target);
-        else return node->count + get_number(node->right, target);
+        if (curr_left >= left && curr_right <= right)
+        {
+            return std::make_shared<Node>(node->count + status, node->left, node->right);
+        }
+        if (curr_left >= right || curr_right <= left || curr_right <= curr_left + 1)
+        {
+            return node;
+        }
+        int mid = (curr_left + curr_right) / 2;
+        auto left_copy = insert(status, left, right, curr_left, mid, node->left);
+        auto right_copy = insert(status, left, right, mid, curr_right, node->right);
+        auto new_node = std::make_shared<Node>(node->count, left_copy, right_copy);
+        return new_node;
     }
-    return 0;
-}
+
+public:
+    SegmentTree() = default;
+
+    SegmentTree(const std::vector<int>& values)
+    {
+        size = values.size();
+        roots.push_back(std::make_shared<Node>());
+        build_segment_tree(values, 0, values.size(), roots[0]);
+    }
+    void update(int status, int left, int right)
+    {
+        auto new_root = insert(status, left, right, 0, size, roots[roots.size() - 1]);
+        roots.push_back(new_root);
+    }
+    int get_ans(int target, int index) {
+        auto node = roots[index];
+        int ans = 0, left = 0, right = size;
+        do {
+            ans += node->count;
+            int mid = (left + right) / 2;
+            if (target < mid) {
+                node = node->left;
+                right = mid;
+            }
+            else
+            {
+                node = node->right;
+                left = mid;
+            }
+        } while (node);
+        return ans;
+    }
+};
+
+class PersistentSegmentTree {
+    SegmentTree tree;
+    std::vector<int> coordsX, coordsY;
+public:
+    PersistentSegmentTree(const std::vector<std::vector<int>>& rectangles) {
+        std::vector<Event> events;
+        std::set<int> help;
+        for (const std::vector<int>& rectangle : rectangles)
+        {
+            events.push_back({ rectangle[0], rectangle[1], rectangle[3], 1 });
+            events.push_back({ rectangle[2], rectangle[1], rectangle[3], -1 });
+            help.insert(rectangle[1]);
+            help.insert(rectangle[3]);
+            coordsX.push_back(rectangle[0]);
+            coordsX.push_back(rectangle[2]);
+        }
+        std::sort(events.begin(), events.end(), [](Event e1, Event e2) {return e1.x < e2.x; });
+        std::sort(coordsX.begin(), coordsX.end());
+        coordsY = std::vector<int>(help.begin(), help.end());
+        tree = SegmentTree(std::vector<int>(coordsY.size(), 0));
+        for (const Event& event : events)
+        {
+            int y1 = (std::upper_bound(coordsY.begin(), coordsY.end(), event.startY) - coordsY.begin() - 1);
+            int y2 = (std::upper_bound(coordsY.begin(), coordsY.end(), event.endY) - coordsY.begin() - 1);
+            tree.update(event.status, y1, y2);
+        }
+    }
+
+    int get_answer(int x, int y)
+    {
+        int x_ind = (std::upper_bound(coordsX.begin(), coordsX.end(), x) - coordsX.begin());
+        int y_ind = (std::upper_bound(coordsY.begin(), coordsY.end(), y) - coordsY.begin() - 1);
+        return tree.get_ans(y_ind, x_ind);
+    }
+};
 
 void tree_algo() {
-    std::vector<int> num_rects = { 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048 }; // количество прямоугольников
+    std::vector<int> num_rects = { 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048 }; // РєРѕР»РёС‡РµСЃС‚РІРѕ РїСЂСЏРјРѕСѓРіРѕР»СЊРЅРёРєРѕРІ
     for (int N : num_rects)
     {
         std::vector<std::vector<int>> rectangles = create_rectangles(N);
@@ -83,19 +127,17 @@ void tree_algo() {
 
         // preprocessing
         auto start_preproc = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-        std::vector<int> coordsX = compressed_coords(rectangles, 'x');
-        std::vector<int> coordsY = compressed_coords(rectangles, 'y');
-        std::vector<Node*> roots = build_persistent_segment_tree(rectangles, coordsY);
+        PersistentSegmentTree tree(rectangles);
         auto end_preproc = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 
         // query processing
         auto start_query = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
         for (std::vector<int> point : points)
         {
-            int x = binary_search(coordsX, point[0]), y = binary_search(coordsY, point[1]);
-            // Выводим количество прямоугольников, которым принадлежит данная точка
-            //if (x != -1 && y != -1) std::cout << "(" << point[0] << ", " << point[1] << "): "<< get_number(roots[x], y) <<"\n"; 
-            //else  std::cout << "(" << point[0] << ", " << point[1] << "): "<< 0 <<"\n";
+            int x = point[0], y = point[1];
+            int ans = tree.get_answer(x, y);
+            // Р’С‹РІРѕРґРёРј РєРѕР»РёС‡РµСЃС‚РІРѕ РїСЂСЏРјРѕСѓРіРѕР»СЊРЅРёРєРѕРІ, РєРѕС‚РѕСЂС‹Рј РїСЂРёРЅР°РґР»РµР¶РёС‚ РґР°РЅРЅР°СЏ С‚РѕС‡РєР°
+            //std::cout << ans <<"\n"; 
         }
         auto end_query = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
         std::cout << N << ":\n";
